@@ -3286,9 +3286,11 @@ func (s *S) TestAppProcessUpdate(c *check.C) {
 			c.Assert(err, check.IsNil)
 			c.Assert(m["processes"], check.DeepEquals, []any{
 				map[string]any{
-					"name":     "process02",
-					"plan":     "c2m2",
-					"metadata": map[string]any{},
+					"name":         "process02",
+					"plan":         "c2m2",
+					"metadata":     map[string]any{},
+					"healthcheck":  map[string]any{},
+					"startupcheck": map[string]any{},
 				},
 			})
 			return true
@@ -3321,9 +3323,11 @@ func (s *S) TestAppProcessUpdateReset(c *check.C) {
 			c.Assert(err, check.IsNil)
 			c.Assert(m["processes"], check.DeepEquals, []any{
 				map[string]any{
-					"name":     "process02",
-					"plan":     "$default",
-					"metadata": map[string]any{},
+					"name":         "process02",
+					"plan":         "$default",
+					"metadata":     map[string]any{},
+					"healthcheck":  map[string]any{},
+					"startupcheck": map[string]any{},
 				},
 			})
 			return true

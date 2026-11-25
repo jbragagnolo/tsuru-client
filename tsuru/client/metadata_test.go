@@ -229,7 +229,9 @@ func (s *S) TestMetadataSetRunAppWithProcess(c *check.C) {
 				"metadata":     map[string]interface{}{},
 				"processes": []interface{}{
 					map[string]interface{}{
-						"name": "web",
+						"name":         "web",
+						"healthcheck":  map[string]interface{}{},
+						"startupcheck": map[string]interface{}{},
 						"metadata": map[string]interface{}{
 							"labels": []interface{}{map[string]interface{}{"name": "test.tsuru.io/label", "value": "some-value"}},
 						},
@@ -456,7 +458,9 @@ func (s *S) TestMetadataUnsetRunAppWithProcess(c *check.C) {
 				"metadata":     map[string]interface{}{},
 				"processes": []interface{}{
 					map[string]interface{}{
-						"name": "worker",
+						"name":         "worker",
+						"healthcheck":  map[string]interface{}{},
+						"startupcheck": map[string]interface{}{},
 						"metadata": map[string]interface{}{
 							"labels": []interface{}{map[string]interface{}{"name": "test.tsuru.io/label", "delete": true}},
 						},
