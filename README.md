@@ -30,6 +30,21 @@ The following environment variables can be used to configure the client:
 * `TSURU_CLIENT_SELF_UPDATE_SNOOZE_DURATION`: snooze the self-updating process for
   the given duration. (default: 0s)
 
+## App info view
+
+`tsuru app info` defaults to the `normal` view. Use `--view=simplified` for
+a summary or `--view=detailed` to include process healthchecks and startupchecks.
+Set the default in `~/.tsuru/client.yaml`:
+
+```yaml
+app-info-view: detailed
+```
+
+The supported values are `normal`, `simplified`, and `detailed`. The
+`TSURU_APP_INFO_VIEW` environment variable overrides the file, and `--view`
+overrides both. The legacy `-s` / `--simplified` flag remains available but is
+deprecated; use `--view=simplified` instead. `--json` is unaffected.
+
 ## Tsuru plugins
 
 Tsuru plugins are the standard way to extend tsuru-client functionality transparently.

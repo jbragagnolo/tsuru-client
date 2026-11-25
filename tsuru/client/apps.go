@@ -32,6 +32,7 @@ import (
 	"github.com/tsuru/tsuru-client/tsuru/cmd"
 	"github.com/tsuru/tsuru-client/tsuru/cmd/completions"
 	"github.com/tsuru/tsuru-client/tsuru/cmd/standards"
+	v2 "github.com/tsuru/tsuru-client/tsuru/cmd/v2"
 	"github.com/tsuru/tsuru-client/tsuru/formatter"
 	tsuruHTTP "github.com/tsuru/tsuru-client/tsuru/http"
 	appTypes "github.com/tsuru/tsuru/types/app"
@@ -409,6 +410,7 @@ type AppInfo struct {
 
 	json         bool
 	simplified   bool
+	view         string
 	flagsApplied bool
 }
 
@@ -425,6 +427,8 @@ func (cmd *AppInfo) Flags() *pflag.FlagSet {
 	fs := cmd.AppNameMixIn.Flags()
 	if !cmd.flagsApplied {
 		fs.BoolVarP(&cmd.simplified, "simplified", "s", false, "Show simplified view of app")
+		fs.MarkDeprecated("simplified", "use --view=simplified instead")
+		fs.StringVar(&cmd.view, "view", "", "App info view: normal, simplified, or detailed")
 		fs.BoolVar(&cmd.json, standards.FlagJSON, false, "Show JSON view of app")
 
 		cmd.flagsApplied = true
@@ -437,6 +441,14 @@ func (cmd *AppInfo) Complete(args []string, toComplete string) ([]string, error)
 }
 
 func (c *AppInfo) Run(context *cmd.Context) error {
+	view := "normal"
+	if !c.json {
+		var err error
+		view, err = c.resolveView()
+		if err != nil {
+			return err
+		}
+	}
 	appName, err := c.AppNameByArgsAndFlag(context.Args)
 	if err != nil {
 		return err
@@ -462,7 +474,31 @@ func (c *AppInfo) Run(context *cmd.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.Show(&a, context, c.simplified)
+	return c.Show(&a, context, view)
+}
+
+func (c *AppInfo) resolveView() (string, error) {
+	fs := c.Flags()
+	view := c.view
+	if fs.Changed("view") {
+		if c.simplified && view != "simplified" {
+			return "", fmt.Errorf("--simplified cannot be combined with --view=%s", view)
+		}
+	} else if c.simplified {
+		return "simplified", nil
+	} else {
+		var found bool
+		view, found = v2.AppInfoView()
+		if !found {
+			return "normal", nil
+		}
+	}
+	switch view {
+	case "normal", "simplified", "detailed":
+		return view, nil
+	default:
+		return "", fmt.Errorf("invalid app info view %q: expected normal, simplified, or detailed", view)
+	}
 }
 
 func unitHost(u provTypes.Unit) string {
@@ -751,7 +787,8 @@ Addresses:    {{.Addr | replace "\n" "\n              " }}
 {{ end -}}
 `
 
-func (a *app) String(simplified bool) string {
+func (a *app) String(view string) string {
+	simplified := view == "simplified"
 	var format string
 
 	if simplified {
@@ -898,7 +935,7 @@ func (a *app) String(simplified bool) string {
 		}
 	}
 
-	if !simplified {
+	if view == "detailed" {
 		renderProcessChecks(&buf, a.processChecks)
 	}
 
@@ -1383,11 +1420,11 @@ func translateTimestampSince(timestamp *time.Time) string {
 	return duration.HumanDuration(time.Since(*timestamp))
 }
 
-func (c *AppInfo) Show(a *app, context *cmd.Context, simplified bool) error {
+func (c *AppInfo) Show(a *app, context *cmd.Context, view string) error {
 	if c.json {
 		return formatter.JSON(context.Stdout, a)
 	}
-	fmt.Fprintln(context.Stdout, a.String(simplified))
+	fmt.Fprintln(context.Stdout, a.String(view))
 	return nil
 }
 

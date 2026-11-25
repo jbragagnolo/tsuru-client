@@ -5,11 +5,40 @@
 package v2
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/fatih/color"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"github.com/tsuru/tablecli"
+	"github.com/tsuru/tsuru-client/tsuru/cmd/standards"
 )
+
+func TestAppInfoViewFromClientConfig(t *testing.T) {
+	originalViper, originalDir := defaultViper, TsuruConfigDir
+	originalTable, originalColor, originalPadding := tablecli.TableConfig, color.NoColor, standards.SubTableWriterPadding
+	defer func() {
+		defaultViper, TsuruConfigDir = originalViper, originalDir
+		tablecli.TableConfig, color.NoColor, standards.SubTableWriterPadding = originalTable, originalColor, originalPadding
+	}()
+
+	TsuruConfigDir = t.TempDir()
+	t.Setenv("TSURU_APP_INFO_VIEW", "")
+	if err := os.WriteFile(filepath.Join(TsuruConfigDir, "client.yaml"), []byte("app-info-view: detailed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	defaultViper = preSetupViper(nil)
+	view, found := AppInfoView()
+	assert.True(t, found)
+	assert.Equal(t, "detailed", view)
+
+	t.Setenv("TSURU_APP_INFO_VIEW", "simplified")
+	view, found = AppInfoView()
+	assert.True(t, found)
+	assert.Equal(t, "simplified", view)
+}
 
 func TestPager(t *testing.T) {
 	originalViper := defaultViper

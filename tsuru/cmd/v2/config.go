@@ -25,6 +25,11 @@ func ColorDisabled() bool {
 	return colorDisabled(defaultViper)
 }
 
+func AppInfoView() (string, bool) {
+	const key = "app-info-view"
+	return defaultViper.GetString(key), defaultViper.IsSet(key)
+}
+
 func colorDisabled(vip *viper.Viper) bool {
 	// https://no-color.org/
 	if _, nocolor := os.LookupEnv("NO_COLOR"); nocolor {

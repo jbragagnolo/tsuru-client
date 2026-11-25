@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1413,10 +1414,75 @@ func (s *S) TestAppInfoHealthchecks(c *check.C) {
 	}
 	s.setupFakeTransport(&cmdtest.Transport{Message: result, Status: http.StatusOK})
 	command := AppInfo{}
-	command.Flags().Parse([]string{"--app", "app1"})
+	command.Flags().Parse([]string{"--app", "app1", "--view=detailed"})
 	err := command.Run(&context)
 	c.Assert(err, check.IsNil)
 	c.Assert(strings.Contains(stdout.String(), expected), check.Equals, true, check.Commentf("unexpected output:\n%s", stdout.String()))
+}
+
+func (s *S) TestAppInfoDefaultViewOmitsChecks(c *check.C) {
+	var stdout, stderr bytes.Buffer
+	result := `{"name":"app1","processes":[{"name":"web","healthcheck":{"path":"/health"}}]}`
+	context := cmd.Context{Stdout: &stdout, Stderr: &stderr}
+	s.setupFakeTransport(&cmdtest.Transport{Message: result, Status: http.StatusOK})
+	command := AppInfo{}
+	c.Assert(command.Flags().Parse([]string{"--app", "app1"}), check.IsNil)
+	c.Assert(command.Run(&context), check.IsNil)
+	c.Assert(strings.Contains(stdout.String(), "Process checks:"), check.Equals, false)
+}
+
+func (s *S) TestAppInfoViewSelection(c *check.C) {
+	oldValue, wasSet := os.LookupEnv("TSURU_APP_INFO_VIEW")
+	defer func() {
+		if wasSet {
+			os.Setenv("TSURU_APP_INFO_VIEW", oldValue)
+		} else {
+			os.Unsetenv("TSURU_APP_INFO_VIEW")
+		}
+	}()
+	result := `{"name":"app1","processes":[{"name":"web","healthcheck":{"path":"/health"}}]}`
+	tests := []struct {
+		name        string
+		config      string
+		flags       []string
+		wantChecks  bool
+		wantSummary bool
+		wantError   bool
+	}{
+		{"configured detailed", "detailed", nil, true, false, false},
+		{"configured normal", "normal", nil, false, false, false},
+		{"configured simplified", "simplified", nil, false, true, false},
+		{"flag detailed", "normal", []string{"--view=detailed"}, true, false, false},
+		{"flag normal", "detailed", []string{"--view=normal"}, false, false, false},
+		{"flag simplified", "detailed", []string{"--view=simplified"}, false, true, false},
+		{"legacy shorthand", "detailed", []string{"-s"}, false, true, false},
+		{"legacy long flag", "detailed", []string{"--simplified"}, false, true, false},
+		{"compatible flags", "normal", []string{"--view=simplified", "-s"}, false, true, false},
+		{"conflicting flags", "normal", []string{"--view=detailed", "-s"}, false, false, true},
+		{"invalid flag", "normal", []string{"--view=unknown"}, false, false, true},
+		{"empty flag", "normal", []string{"--view="}, false, false, true},
+		{"invalid configuration", "unknown", nil, false, false, true},
+		{"override invalid configuration", "unknown", []string{"--view=detailed"}, true, false, false},
+		{"legacy override invalid configuration", "unknown", []string{"-s"}, false, true, false},
+	}
+	for _, tt := range tests {
+		c.Log(tt.name)
+		c.Assert(os.Setenv("TSURU_APP_INFO_VIEW", tt.config), check.IsNil)
+		var stdout, stderr bytes.Buffer
+		context := cmd.Context{Stdout: &stdout, Stderr: &stderr}
+		s.setupFakeTransport(&cmdtest.Transport{Message: result, Status: http.StatusOK})
+		command := AppInfo{}
+		args := append([]string{"--app", "app1"}, tt.flags...)
+		c.Assert(command.Flags().Parse(args), check.IsNil)
+		err := command.Run(&context)
+		if tt.wantError {
+			c.Assert(err, check.NotNil)
+			continue
+		}
+		c.Assert(err, check.IsNil)
+		c.Assert(strings.Contains(stdout.String(), "Process checks:"), check.Equals, tt.wantChecks)
+		c.Assert(strings.Contains(stdout.String(), "Quota:"), check.Equals, !tt.wantSummary)
+	}
 }
 
 func (s *S) TestAppInfoEmptyChecks(c *check.C) {
@@ -1425,7 +1491,7 @@ func (s *S) TestAppInfoEmptyChecks(c *check.C) {
 	context := cmd.Context{Stdout: &stdout, Stderr: &stderr}
 	s.setupFakeTransport(&cmdtest.Transport{Message: result, Status: http.StatusOK})
 	command := AppInfo{}
-	command.Flags().Parse([]string{"--app", "app1"})
+	command.Flags().Parse([]string{"--app", "app1", "--view=detailed"})
 	err := command.Run(&context)
 	c.Assert(err, check.IsNil)
 	c.Assert(strings.Contains(stdout.String(), "Process checks:"), check.Equals, false)
@@ -1437,7 +1503,7 @@ func (s *S) TestAppInfoOnlyStartupcheck(c *check.C) {
 	context := cmd.Context{Stdout: &stdout, Stderr: &stderr}
 	s.setupFakeTransport(&cmdtest.Transport{Message: result, Status: http.StatusOK})
 	command := AppInfo{}
-	command.Flags().Parse([]string{"--app", "app1"})
+	command.Flags().Parse([]string{"--app", "app1", "--view=detailed"})
 	err := command.Run(&context)
 	c.Assert(err, check.IsNil)
 	c.Assert(stdout.String(), check.Matches, `(?s).*\| worker\s+\|\s+\| command: \["ready"\]\s+\|.*`)
@@ -1452,13 +1518,22 @@ func (s *S) TestAppInfoChecksTabWriter(c *check.C) {
 	context := cmd.Context{Stdout: &stdout, Stderr: &stderr}
 	s.setupFakeTransport(&cmdtest.Transport{Message: result, Status: http.StatusOK})
 	command := AppInfo{}
-	command.Flags().Parse([]string{"--app", "app1"})
+	command.Flags().Parse([]string{"--app", "app1", "--view=detailed"})
 	err := command.Run(&context)
 	c.Assert(err, check.IsNil)
 	c.Assert(stdout.String(), check.Matches, `(?s).*PROCESS\s+HEALTHCHECK\s+STARTUPCHECK\s*\n\s+web\s+path: first\s+command: \["ready"\]\s*\n\s+second\s*\n\s+scheme: http\s*\n.*`)
 }
 
 func (s *S) TestAppInfoHealthchecksJSON(c *check.C) {
+	oldValue, wasSet := os.LookupEnv("TSURU_APP_INFO_VIEW")
+	defer func() {
+		if wasSet {
+			os.Setenv("TSURU_APP_INFO_VIEW", oldValue)
+		} else {
+			os.Unsetenv("TSURU_APP_INFO_VIEW")
+		}
+	}()
+	c.Assert(os.Setenv("TSURU_APP_INFO_VIEW", "invalid"), check.IsNil)
 	var stdout, stderr bytes.Buffer
 	result := `{"name":"app1","processes":[{"name":"web","healthcheck":{"path":"/health","scheme":"http","future_field":1}}]}`
 	context := cmd.Context{Stdout: &stdout, Stderr: &stderr}
