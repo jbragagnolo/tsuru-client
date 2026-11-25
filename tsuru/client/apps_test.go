@@ -18,6 +18,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
+	"github.com/tsuru/tablecli"
 	tsuruApp "github.com/tsuru/tsuru-client/tsuru/app"
 	"github.com/tsuru/tsuru-client/tsuru/cmd"
 	"github.com/tsuru/tsuru-client/tsuru/cmd/cmdtest"
@@ -885,7 +886,7 @@ Units: 3
 
 func (s *S) TestAppInfoSimplified(c *check.C) {
 	var stdout, stderr bytes.Buffer
-	result := `{"name":"app1","pool": "dev-a", "provisioner": "kubernetes", "cluster": "mycluster", "teamowner":"myteam","cname":[""],"ip":"myapp.tsuru.io","platform":"php","repository":"git@git.com:php.git","state":"dead", "units":[{"Ip":"10.10.10.10","ID":"app1/0","Status":"started","ProcessName": "web","Address":{"Host": "10.8.7.6:3333"}, "ready": true, "routable": true}, {"Ip":"9.9.9.9","ID":"app1/1","Status":"started","ProcessName": "web","Address":{"Host": "10.8.7.6:3323"}, "ready": true, "routable": true}],"teams":["tsuruteam","crane"], "owner": "myapp_owner", "deploys": 7, "router": "planb", "plan":{"name": "test",  "memory": 536870912, "cpumilli": 100, "default": false}}`
+	result := `{"name":"app1","pool": "dev-a", "provisioner": "kubernetes", "cluster": "mycluster", "teamowner":"myteam","cname":[""],"ip":"myapp.tsuru.io","platform":"php","repository":"git@git.com:php.git","state":"dead", "units":[{"Ip":"10.10.10.10","ID":"app1/0","Status":"started","ProcessName": "web","Address":{"Host": "10.8.7.6:3333"}, "ready": true, "routable": true}, {"Ip":"9.9.9.9","ID":"app1/1","Status":"started","ProcessName": "web","Address":{"Host": "10.8.7.6:3323"}, "ready": true, "routable": true}],"processes":[{"name":"web","healthcheck":{"path":"/health","scheme":"http"}}],"teams":["tsuruteam","crane"], "owner": "myapp_owner", "deploys": 7, "router": "planb", "plan":{"name": "test",  "memory": 536870912, "cpumilli": 100, "default": false}}`
 	expected := `Application:  app1
 Created by:   myapp_owner
 Platform:     php
@@ -1348,6 +1349,133 @@ Units [process worker]: 2
 	err := command.Run(&context)
 	c.Assert(err, check.IsNil)
 	c.Assert(stdout.String(), check.Equals, expected)
+}
+
+func (s *S) TestAppInfoHealthchecks(c *check.C) {
+	var stdout, stderr bytes.Buffer
+	result := `{
+  "name": "app1",
+  "processes": [
+    {
+      "name": "worker",
+      "healthcheck": {
+        "command": ["check-worker"],
+        "allowed_failures": 1,
+        "force_restart": false,
+        "future_field": 0
+      }
+    },
+    {
+      "name": "web",
+      "healthcheck": {
+        "headers": {"X-Check": "enabled"},
+        "path": "/health",
+        "scheme": "https",
+        "allowed_failures": 3,
+        "interval_seconds": 10,
+        "timeout_seconds": 2,
+        "deploy_timeout_seconds": 45,
+        "force_restart": true
+      },
+      "startupcheck": {
+        "path": "/startup",
+        "scheme": "http",
+        "command": ["check-startup"],
+        "allowed_failures": 5,
+        "interval_seconds": 15,
+        "timeout_seconds": 4
+      }
+    }
+  ]
+}`
+	expected := `Process checks:
++---------+--------------------------------+----------------------------+
+| Process | Healthcheck                    | Startupcheck               |
++---------+--------------------------------+----------------------------+
+| web     | allowed_failures: 3            | allowed_failures: 5        |
+|         | deploy_timeout_seconds: 45     | command: ["check-startup"] |
+|         | force_restart: true            | interval_seconds: 15       |
+|         | headers: {"X-Check":"enabled"} | path: /startup             |
+|         | interval_seconds: 10           | scheme: http               |
+|         | path: /health                  | timeout_seconds: 4         |
+|         | scheme: https                  |                            |
+|         | timeout_seconds: 2             |                            |
++---------+--------------------------------+----------------------------+
+| worker  | allowed_failures: 1            |                            |
+|         | command: ["check-worker"]      |                            |
+|         | force_restart: false           |                            |
+|         | future_field: 0                |                            |
++---------+--------------------------------+----------------------------+
+`
+	context := cmd.Context{
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+	s.setupFakeTransport(&cmdtest.Transport{Message: result, Status: http.StatusOK})
+	command := AppInfo{}
+	command.Flags().Parse([]string{"--app", "app1"})
+	err := command.Run(&context)
+	c.Assert(err, check.IsNil)
+	c.Assert(strings.Contains(stdout.String(), expected), check.Equals, true, check.Commentf("unexpected output:\n%s", stdout.String()))
+}
+
+func (s *S) TestAppInfoEmptyChecks(c *check.C) {
+	var stdout, stderr bytes.Buffer
+	result := `{"name":"app1","processes":[{"name":"web","healthcheck":{},"startupcheck":null},{"name":"worker"}]}`
+	context := cmd.Context{Stdout: &stdout, Stderr: &stderr}
+	s.setupFakeTransport(&cmdtest.Transport{Message: result, Status: http.StatusOK})
+	command := AppInfo{}
+	command.Flags().Parse([]string{"--app", "app1"})
+	err := command.Run(&context)
+	c.Assert(err, check.IsNil)
+	c.Assert(strings.Contains(stdout.String(), "Process checks:"), check.Equals, false)
+}
+
+func (s *S) TestAppInfoOnlyStartupcheck(c *check.C) {
+	var stdout, stderr bytes.Buffer
+	result := `{"name":"app1","processes":[{"name":"worker","startupcheck":{"command":["ready"]}}]}`
+	context := cmd.Context{Stdout: &stdout, Stderr: &stderr}
+	s.setupFakeTransport(&cmdtest.Transport{Message: result, Status: http.StatusOK})
+	command := AppInfo{}
+	command.Flags().Parse([]string{"--app", "app1"})
+	err := command.Run(&context)
+	c.Assert(err, check.IsNil)
+	c.Assert(stdout.String(), check.Matches, `(?s).*\| worker\s+\|\s+\| command: \["ready"\]\s+\|.*`)
+}
+
+func (s *S) TestAppInfoChecksTabWriter(c *check.C) {
+	tablecli.TableConfig.UseTabWriter = true
+	defer func() { tablecli.TableConfig.UseTabWriter = false }()
+
+	var stdout, stderr bytes.Buffer
+	result := `{"name":"app1","processes":[{"name":"web","healthcheck":{"path":"first\nsecond","scheme":"http"},"startupcheck":{"command":["ready"]}}]}`
+	context := cmd.Context{Stdout: &stdout, Stderr: &stderr}
+	s.setupFakeTransport(&cmdtest.Transport{Message: result, Status: http.StatusOK})
+	command := AppInfo{}
+	command.Flags().Parse([]string{"--app", "app1"})
+	err := command.Run(&context)
+	c.Assert(err, check.IsNil)
+	c.Assert(stdout.String(), check.Matches, `(?s).*PROCESS\s+HEALTHCHECK\s+STARTUPCHECK\s*\n\s+web\s+path: first\s+command: \["ready"\]\s*\n\s+second\s*\n\s+scheme: http\s*\n.*`)
+}
+
+func (s *S) TestAppInfoHealthchecksJSON(c *check.C) {
+	var stdout, stderr bytes.Buffer
+	result := `{"name":"app1","processes":[{"name":"web","healthcheck":{"path":"/health","scheme":"http","future_field":1}}]}`
+	context := cmd.Context{Stdout: &stdout, Stderr: &stderr}
+	s.setupFakeTransport(&cmdtest.Transport{Message: result, Status: http.StatusOK})
+	command := AppInfo{}
+	command.Flags().Parse([]string{"--app", "app1", "--json"})
+	err := command.Run(&context)
+	c.Assert(err, check.IsNil)
+
+	var output map[string]json.RawMessage
+	c.Assert(json.Unmarshal(stdout.Bytes(), &output), check.IsNil)
+	var processes []appTypes.Process
+	c.Assert(json.Unmarshal(output["processes"], &processes), check.IsNil)
+	c.Assert(processes, check.HasLen, 1)
+	c.Assert(processes[0].Name, check.Equals, "web")
+	c.Assert(processes[0].Healthcheck.Path, check.Equals, "/health")
+	c.Assert(strings.Contains(stdout.String(), "future_field"), check.Equals, false)
 }
 
 func (s *S) TestAppInfoManyVersions(c *check.C) {

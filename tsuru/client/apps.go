@@ -511,7 +511,64 @@ func unitPort(u provTypes.Unit) string {
 	return strings.Join(ports, ", ")
 }
 
-type app appTypes.AppInfo
+type app struct {
+	appTypes.AppInfo
+	processChecks []processChecks
+}
+
+type processChecks struct {
+	Name         string      `json:"name"`
+	Healthcheck  checkFields `json:"healthcheck"`
+	Startupcheck checkFields `json:"startupcheck"`
+}
+
+type checkFields map[string]string
+
+func (fields *checkFields) UnmarshalJSON(data []byte) error {
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(data, &values); err != nil {
+		return err
+	}
+	if values == nil {
+		*fields = nil
+		return nil
+	}
+
+	result := make(checkFields, len(values))
+	for name, value := range values {
+		if len(value) > 0 && value[0] == '"' {
+			var text string
+			if err := json.Unmarshal(value, &text); err != nil {
+				return err
+			}
+			result[name] = text
+		} else {
+			var compact bytes.Buffer
+			if err := json.Compact(&compact, value); err != nil {
+				return err
+			}
+			result[name] = compact.String()
+		}
+	}
+	*fields = result
+	return nil
+}
+
+func (a *app) UnmarshalJSON(data []byte) error {
+	var info appTypes.AppInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		return err
+	}
+	var response struct {
+		Processes []processChecks `json:"processes"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return err
+	}
+	a.AppInfo = info
+	a.processChecks = response.Processes
+	return nil
+}
 
 func (a *app) QuotaString() string {
 	if a.Quota == nil {
@@ -841,6 +898,10 @@ func (a *app) String(simplified bool) string {
 		}
 	}
 
+	if !simplified {
+		renderProcessChecks(&buf, a.processChecks)
+	}
+
 	if !simplified && internalAddressesTable.Rows() > 0 {
 		buf.WriteString("\n")
 		buf.WriteString("Cluster internal addresses:\n")
@@ -857,6 +918,47 @@ func (a *app) String(simplified bool) string {
 	var tplBuffer bytes.Buffer
 	tmpl.Execute(&tplBuffer, a)
 	return tplBuffer.String() + buf.String()
+}
+
+func renderProcessChecks(buf *bytes.Buffer, processes []processChecks) {
+	processesWithChecks := make([]processChecks, 0, len(processes))
+	for _, process := range processes {
+		if len(process.Healthcheck) > 0 || len(process.Startupcheck) > 0 {
+			processesWithChecks = append(processesWithChecks, process)
+		}
+	}
+	if len(processesWithChecks) == 0 {
+		return
+	}
+
+	sort.Slice(processesWithChecks, func(i, j int) bool {
+		return processesWithChecks[i].Name < processesWithChecks[j].Name
+	})
+
+	table := tablecli.NewTable()
+	table.Headers = []string{"Process", "Healthcheck", "Startupcheck"}
+	table.TableWriterPadding = standards.SubTableWriterPadding
+	table.TableWriterExpandRows = true
+	table.LineSeparator = true
+	for _, process := range processesWithChecks {
+		table.AddRow([]string{process.Name, formatCheckFields(process.Healthcheck), formatCheckFields(process.Startupcheck)})
+	}
+	buf.WriteString("\nProcess checks:\n")
+	fmt.Fprint(buf, table.String())
+}
+
+func formatCheckFields(fields checkFields) string {
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	lines := make([]string, 0, len(names))
+	for _, name := range names {
+		lines = append(lines, name+": "+fields[name])
+	}
+	return strings.Join(lines, "\n")
 }
 
 func buildScheduleInfo(schedule provTypes.AutoScaleSchedule) []string {
